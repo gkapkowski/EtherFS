@@ -11,37 +11,43 @@ import errno
 import glob
 from errno import ENOENT
 from stat import S_IFDIR, S_IFLNK, S_IFREG
-from time import time
 from web3 import Web3, IPCProvider
+from web3.providers.ipc import get_default_ipc_path
 from fuse import FUSE, FuseOSError, Operations
 import getpass
 
 
 class Geth(object):
 
-    web3 = Web3(IPCProvider(testnet=True))
+    account = None
 
-    def deploy(self, abi, bin, runtime):
+    def __init__(self, testnet=True):
+        self.testnet = testnet
+        self.web3 = Web3(IPCProvider(testnet=testnet))
+        self.wait()
+        self.accounts = self.web3.eth.accounts
 
-        try:
-            account = self.web3.eth.coinbase
-        except:
-            account = self.web3.personal.newAccount()
-            print "You need to charge your account with some ether in order to use it"
+    def wait(self):
+        while True:
+            if os.path.exists(get_default_ipc_path(testnet=self.testnet)):
+                break
+            time.sleep(1)
 
-        print "Account:", account
-
-        #password = getpass.getpass("Passphrase:")
-
-        self.web3.personal.unlockAccount(account, 'test')
+    def deploy(self, abi, bin, runtime, value=0, args=None):
 
         contract = self.web3.eth.contract(abi=json.loads(abi), code=bin, code_runtime=runtime)
-        tx_hash = contract.deploy()
+        tx_hash = contract.deploy(transaction={
+                'from': self.account,
+                'value': value,
+            },
+            args=args,
+        )
 
         print tx_hash
 
-
-geth = Geth()
+    def unlock(self, account, passphrase):
+        self.account = account
+        self.web3.personal.unlockAccount(account, passphrase)
 
 
 class Passthrough(Operations):
@@ -52,7 +58,9 @@ class Passthrough(Operations):
              'interface', 'opcodes', 'srcmap', 'srcmap-runtime', 'userdoc']
 
     def __init__(self, root):
+        self.fd = 0
         self.root = root
+        self.geth = Geth()
         for source_file in glob.glob(os.path.join(root, "*.sol")):
             output = subprocess.check_output([
                 'solc', '--add-std', '--optimize',
@@ -72,7 +80,7 @@ class Passthrough(Operations):
     # ==================
 
     def access(self, path, mode):
-        print 'access', path
+        print 'access', path, mode
 
     def chmod(self, path, mode):
         print 'chmod', path
@@ -82,24 +90,45 @@ class Passthrough(Operations):
 
     def getattr(self, path, fh=None):
         print 'getattr', path
-        now = time()
-        if path == '/' or path[1:] in self.CONTRACTS.keys():
+        now = time.time()
+        if path == '/' or path[1:] in self.CONTRACTS.keys() or path == '/.personal':
             return dict(
                 st_mode=(S_IFDIR | 0o444), st_ctime=now,
                 st_mtime=now, st_atime=now, st_nlink=2)
 
-        pattern = "/(" + "|".join(self.CONTRACTS.keys()) + ")/(" + "|".join(self.ATTRS) + ")"
+        pattern = r"/\.personal/accounts/new"
+
+        if re.match(pattern, path):
+            return dict(st_mode=(S_IFREG | 0o444), st_nlink=1,
+                        st_size=1000, st_ctime=now, st_mtime=now,
+                        st_atime=now)
+
+        pattern = r"/\.personal/accounts/0x\w{40}/unlock"
+
+        if re.match(pattern, path):
+            return dict(st_mode=(S_IFREG | 0o666), st_nlink=1,
+                        st_size=1000, st_ctime=now, st_mtime=now,
+                        st_atime=now)
+
+        pattern = r"/\.personal/accounts/0x\w{40}/balance"
+
+        if re.match(pattern, path):
+            return dict(st_mode=(S_IFREG | 0o444), st_nlink=1,
+                        st_size=1000, st_ctime=now, st_mtime=now,
+                        st_atime=now)
+
+
+        pattern = r"/(" + "|".join(self.CONTRACTS.keys()) + ")/(" + "|".join(self.ATTRS) + ")"
 
         if re.match(pattern, path):
             contract, attr = path.split(os.path.sep)[1:]
-            data = json.dumps(self.CONTRACTS[contract][attr], indent=2)
             return dict(st_mode=(S_IFREG | 0o444), st_nlink=1,
-                        st_size=len(data), st_ctime=now, st_mtime=now,
+                        st_size=len(self.read(path)), st_ctime=now, st_mtime=now,
                         st_atime=now)
 
         if path.endswith('deploy'):
             return dict(st_mode=(S_IFREG | 0o544), st_nlink=1,
-                        st_size=100, st_ctime=now, st_mtime=now,
+                        st_size=1000, st_ctime=now, st_mtime=now,
                         st_atime=now)
 
         return dict(
@@ -121,7 +150,13 @@ class Passthrough(Operations):
         resp = []
 
         if path == '/':
-            resp = ['.', '..'] + self.CONTRACTS.keys()
+            resp = ['.', '..', '.personal'] + self.CONTRACTS.keys()
+        if path == '/.personal':
+            resp = ['.', '..', 'accounts']
+        if path == '/.personal/accounts':
+            resp = ['.', '..', 'new'] + self.geth.accounts
+        if re.match(r"/\.personal/accounts/0x\w{40}", path):
+            resp = ['.', '..', 'unlock', 'balance']
         if path[1:] in self.CONTRACTS:
             resp = ['.', '..', 'deploy'] + self.CONTRACTS[path[1:]].keys()
 
@@ -166,12 +201,32 @@ class Passthrough(Operations):
     # File methods
     # ============
 
-    def read(self, path, length, offset, fh):
+    def open(self, path, flags):
+        self.fd += 1
+        return self.fd
+
+    def read(self, path, length=None, offset=None, fh=None):
         print 'read', path, length, offset, fh
 
-        if path.endswith('deploy'):
+        if re.match(r"/\.personal/accounts/0x\w{40}/balance", path):
+            return "Not implemented yet"
+
+        match = re.match(r"/\.personal/accounts/(?P<account>0x\w{40})/unlock", path)
+        if match:
+            if match.group('account') == self.geth.account:
+                return "Account unlocked"
+            return """Please unlock account by writing to this file.
+echo 'passphrase' > etherfs/.personal/accounts/0x12345689/unlock"""
+
+        if re.match(r"/\.personal/accounts/new", path):
+            return "Not implemented yet"
+
+        if re.match(r"/(" + "|".join(self.CONTRACTS.keys()) + ")/deploy", path):
             contract, attr = path.split(os.path.sep)[1:3]
-            tx = geth.deploy(self.CONTRACTS[contract]['abi'], self.CONTRACTS[contract]['bin'], self.CONTRACTS[contract]['bin-runtime'])
+            try:
+                tx = self.geth.deploy(self.account, self.CONTRACTS[contract]['abi'], self.CONTRACTS[contract]['bin'], self.CONTRACTS[contract]['bin-runtime'])
+            except Exception as e:
+                return str(e)
             keys = list(self.CONTRACTS[contract]['instances'].keys())
             if keys:
                 current_instance = max() + 1
@@ -182,10 +237,21 @@ class Passthrough(Operations):
             }
             return "Transation: ", tx
         contract, attr = path.split(os.path.sep)[1:]
+        if attr == 'asm':
+            return json.dumps(self.CONTRACTS[contract][attr])
         return str(self.CONTRACTS[contract][attr])
 
     def write(self, path, buf, offset, fh):
         print 'write', path, buf, offset, fh
+
+        match = re.match(r"/\.personal/accounts/(?P<account>0x\w{40})/unlock", path)
+        if match:
+            account = match.group('account')
+            try:
+                self.geth.unlock(account, buf)
+            except Exception as e:
+                pass
+                # TODO: handle wrong passphrase
 
 
 def main(root, mountpoint):
