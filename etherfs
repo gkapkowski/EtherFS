@@ -1,0 +1,202 @@
+#!/usr/bin/env python
+from __future__ import with_statement
+
+import subprocess
+import re
+import os
+import sys
+import json
+import time
+import errno
+import glob
+from errno import ENOENT
+from stat import S_IFDIR, S_IFLNK, S_IFREG
+from time import time
+from web3 import Web3, IPCProvider
+from fuse import FUSE, FuseOSError, Operations
+import getpass
+
+
+class Geth(object):
+
+    web3 = Web3(IPCProvider(testnet=True))
+
+    def deploy(self, abi, bin, runtime):
+
+        try:
+            account = self.web3.eth.coinbase
+        except:
+            account = self.web3.personal.newAccount()
+            print "You need to charge your account with some ether in order to use it"
+
+        print "Account:", account
+
+        #password = getpass.getpass("Passphrase:")
+
+        self.web3.personal.unlockAccount(account, 'test')
+
+        contract = self.web3.eth.contract(abi=json.loads(abi), code=bin, code_runtime=runtime)
+        tx_hash = contract.deploy()
+
+        print tx_hash
+
+
+geth = Geth()
+
+
+class Passthrough(Operations):
+
+    CONTRACTS = {}
+
+    ATTRS = ['abi', 'asm', 'ast', 'bin', 'bin-runtime', 'clone-bin', 'devdoc',
+             'interface', 'opcodes', 'srcmap', 'srcmap-runtime', 'userdoc']
+
+    def __init__(self, root):
+        self.root = root
+        for source_file in glob.glob(os.path.join(root, "*.sol")):
+            output = subprocess.check_output([
+                'solc', '--add-std', '--optimize',
+                '--combined-json', ','.join(self.ATTRS),
+                source_file
+            ])
+
+            compiled_data = json.loads(output)
+
+            for contract_name, contract_data in compiled_data['contracts'].items():
+                # TODO check for doubles
+                self.CONTRACTS[contract_name] = contract_data
+
+        print self.CONTRACTS.keys()
+
+    # Filesystem methods
+    # ==================
+
+    def access(self, path, mode):
+        print 'access', path
+
+    def chmod(self, path, mode):
+        print 'chmod', path
+
+    def chown(self, path, uid, gid):
+        print 'chown', path
+
+    def getattr(self, path, fh=None):
+        print 'getattr', path
+        now = time()
+        if path == '/' or path[1:] in self.CONTRACTS.keys():
+            return dict(
+                st_mode=(S_IFDIR | 0o444), st_ctime=now,
+                st_mtime=now, st_atime=now, st_nlink=2)
+
+        pattern = "/(" + "|".join(self.CONTRACTS.keys()) + ")/(" + "|".join(self.ATTRS) + ")"
+
+        if re.match(pattern, path):
+            contract, attr = path.split(os.path.sep)[1:]
+            data = json.dumps(self.CONTRACTS[contract][attr], indent=2)
+            return dict(st_mode=(S_IFREG | 0o444), st_nlink=1,
+                        st_size=len(data), st_ctime=now, st_mtime=now,
+                        st_atime=now)
+
+        if path.endswith('deploy'):
+            return dict(st_mode=(S_IFREG | 0o544), st_nlink=1,
+                        st_size=100, st_ctime=now, st_mtime=now,
+                        st_atime=now)
+
+        return dict(
+            st_mode=(S_IFDIR | 0o444), st_ctime=now,
+            st_mtime=now, st_atime=now, st_nlink=2)
+        # return {
+        #     'st_atime': 0,
+        #     'st_ctime': 0,
+        #     'st_gid': 1000,
+        #     'st_mode': 644,
+        #     'st_mtime': 0,
+        #     'st_nlink': 0,
+        #     'st_size': 0,
+        #     'st_uid': 1000
+        # }
+
+    def readdir(self, path, fh):
+        print path, fh
+        resp = []
+
+        if path == '/':
+            resp = ['.', '..'] + self.CONTRACTS.keys()
+        if path[1:] in self.CONTRACTS:
+            resp = ['.', '..', 'deploy'] + self.CONTRACTS[path[1:]].keys()
+
+        for r in resp:
+            yield r
+
+    def readlink(self, path):
+        print 'readlink', path
+
+    def mknod(self, path, mode, dev):
+        print 'mknod', path
+
+    def rmdir(self, path):
+        print 'rmdir', path
+
+    def mkdir(self, path, mode):
+        print 'mkdir', path
+
+    def statfs(self, path):
+        print 'statfs', path
+        # stv = os.statvfs(full_path)
+        # return dict((key, getattr(stv, key)) for key in ('f_bavail', 'f_bfree',
+        #     'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag',
+        #     'f_frsize', 'f_namemax'))
+
+    def unlink(self, path):
+        print 'unlink', path
+
+    def symlink(self, name, target):
+        print 'symlink', name, target
+
+    def rename(self, old, new):
+        print 'rename', old, new
+
+    def link(self, target, name):
+        print 'link', target, name
+
+    def utimens(self, path, times=None):
+        print 'utimens', path
+
+
+    # File methods
+    # ============
+
+    def read(self, path, length, offset, fh):
+        print 'read', path, length, offset, fh
+
+        if path.endswith('deploy'):
+            contract, attr = path.split(os.path.sep)[1:3]
+            tx = geth.deploy(self.CONTRACTS[contract]['abi'], self.CONTRACTS[contract]['bin'], self.CONTRACTS[contract]['bin-runtime'])
+            keys = list(self.CONTRACTS[contract]['instances'].keys())
+            if keys:
+                current_instance = max() + 1
+            else:
+                current_instance = 1
+            self.CONTRACTS[contract]['instances'][current_instance] = {
+                "address": "TODO: address"
+            }
+            return "Transation: ", tx
+        contract, attr = path.split(os.path.sep)[1:]
+        return str(self.CONTRACTS[contract][attr])
+
+    def write(self, path, buf, offset, fh):
+        print 'write', path, buf, offset, fh
+
+
+def main(root, mountpoint):
+    geth = subprocess.Popen(['/usr/bin/geth', '--testnet', '--fast', '--cache', '512'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    print os.listdir(root)
+    print os.listdir(mountpoint)
+
+
+    FUSE(Passthrough(root), mountpoint, nothreads=True, foreground=True, allow_other=True)
+
+
+if __name__ == '__main__':
+    main('/workspace', '/etherfs')
