@@ -73,3 +73,18 @@ PUSH1 0x60 PUSH1 0x40 MSTORE PUSH1 0x31 DUP1 PUSH1 0x10 PUSH1 0x0 CODECOPY PUSH1
 $ cat etherfs/Add/bin
 606060405260318060106000396000f3606060405260e060020a600035046397842cce8114601c575b6002565b34600257602435600435016060908152602090f3
 ```
+
+### .eth files (already deployed contracts)
+
+All files with `.eth` extension are treated as specification files for already deployed contract. They format is:
+```
+0x123456789CONTRACTADDRESS
+[{ ... }, { ... JSON ABI ...}]
+```
+
+For Example:
+
+```
+0xF0160428a8552AC9bB7E050D90eEADE4DDD52843
+[{"inputs": [{"type": "address", "name": "_user"}], "type": "function", "constant": true, "name": "userInfo", "outputs": [{"type": "uint256", "name": "centstotal"}, {"type": "uint256", "name": "weitotal"}, {"type": "uint256", "name": "share"}, {"type": "uint256", "name": "badges"}, {"type": "bool", "name": "claimed"}]}, {"inputs": [], "type": "function", "constant": false, "name": "claim", "outputs": [{"type": "bool", "name": "success"}]}, {"inputs": [{"indexed": true, "type": "uint256", "name": "_exchange"}, {"indexed": true, "type": "uint256", "name": "_rate"}, {"indexed": true, "type": "uint256", "name": "_cents"}], "type": "event", "name": "Purchase", "anonymous": false}, {"inputs": [{"indexed": true, "type": "address", "name": "_user"}, {"indexed": true, "type": "uint256", "name": "_amount"}, {"indexed": true, "type": "uint256", "name": "_badges"}], "type": "event", "name": "Claim", "anonymous": false}]
+```
