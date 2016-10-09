@@ -21,12 +21,19 @@ cd your_contracts_dir
 /path/to/etherfs.sh
 ```
 
-### Inspect contract
+### Inspect contracts
+
+We have 4 contracts in `example/Basic.sol` source file. For all of those contract EtherFS will create separate directories and fill them with files allowing access to theirs detail and actions available.
+
+All compiled contracts:
 
 ```bash
 $ ls etherfs/
 Add/  Empty/  greeter/  mortal/
+```
+All information available for one contract:
 
+```bash
 $ ls -l etherfs/Add/
 total 0
 -r--r--r-- 1 root root  221 paź  8 11:42 abi
@@ -40,7 +47,11 @@ total 0
 -r--r--r-- 1 root root   20 paź  8 11:42 srcmap
 -r--r--r-- 1 root root   78 paź  8 11:42 srcmap-runtime
 -r--r--r-- 1 root root   29 paź  8 11:42 userdoc
+```
 
+Inspect ABI for contract:
+
+```bash
 $ cat etherfs/Add/abi | python -m json.tool
 [
     {
@@ -66,10 +77,18 @@ $ cat etherfs/Add/abi | python -m json.tool
         "type": "function"
     }
 ]
+```
 
+Inspect contract opcodes:
+
+```bash
 $ cat etherfs/Add/opcodes
 PUSH1 0x60 PUSH1 0x40 MSTORE PUSH1 0x31 DUP1 PUSH1 0x10 PUSH1 0x0 CODECOPY PUSH1 0x0 RETURN PUSH1 0x60 PUSH1 0x40 MSTORE PUSH1 0xE0 PUSH1 0x2 EXP PUSH1 0x0 CALLDATALOAD DIV PUSH4 0x97842CCE DUP2 EQ PUSH1 0x1C JUMPI JUMPDEST PUSH1 0x2 JUMP JUMPDEST CALLVALUE PUSH1 0x2 JUMPI PUSH1 0x24 CALLDATALOAD PUSH1 0x4 CALLDATALOAD ADD PUSH1 0x60 SWAP1 DUP2 MSTORE PUSH1 0x20 SWAP1 RETURN
+```
 
+Inspect contract code in binary format:
+
+```bash
 $ cat etherfs/Add/bin
 606060405260318060106000396000f3606060405260e060020a600035046397842cce8114601c575b6002565b34600257602435600435016060908152602090f3
 ```
