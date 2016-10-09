@@ -2,9 +2,26 @@
 
 Easy way to interact with Ethereum contracts through file system abstraction.
 
-## Usage
+## Prerequisite
 
-Run command:
+EtherFS uses docker so you have to have installed docker and have `docker` command available. 
+You cna find more on how to install docker here https://docs.docker.com/engine/installation/
+
+## Install 
+
+```bash
+sudo wget https://raw.githubusercontent.com/gkapkowski/EtherFS/master/etherfs.sh -O /usr/local/sbin/etherfs
+sudo chmod 755 /usr/local/sbin/etherfs
+```
+### Run directly via docker
+
+```bash
+sudo docker run -it --privileged \
+     -v "$(pwd)":/workspace \
+     -v "$(pwd)/etherfs":/etherfs:shared \
+     gkapkowski/etherfs
+```
+Use your local testnet data:
 
 ```bash
 sudo docker run -it --privileged \
@@ -14,12 +31,7 @@ sudo docker run -it --privileged \
      gkapkowski/etherfs
 ```
 
-or save file `etherfs.sh` on you disk and run it in your solidity contract directory:
-
-```bash
-cd your_contracts_dir
-/path/to/etherfs.sh
-```
+## Usage
 
 ### Inspect contracts
 
