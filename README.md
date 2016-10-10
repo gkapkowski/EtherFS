@@ -12,13 +12,20 @@ You cna find more on how to install docker here https://docs.docker.com/engine/i
 ## Install
 
 ```bash
-sudo wget https://raw.githubusercontent.com/gkapkowski/EtherFS/master/etherfs.sh -O /usr/local/sbin/etherfs
-sudo chmod 755 /usr/local/sbin/etherfs
+$ sudo wget https://raw.githubusercontent.com/gkapkowski/EtherFS/master/etherfs.sh -O /usr/local/sbin/etherfs
+$ sudo chmod 755 /usr/local/sbin/etherfs
 ```
+### Run
+
+```bash
+$ cd /your/contracts/dir/
+$ etherfs
+```
+
 ### Run directly via docker
 
 ```bash
-sudo docker run -it --privileged \
+$ sudo docker run -it --privileged \
      -v "$(pwd)":/etherfs/source \
      -v "$(pwd)/etherfs":/etherfs/fs:shared \
      gkapkowski/etherfs
@@ -26,7 +33,7 @@ sudo docker run -it --privileged \
 Use your local testnet data:
 
 ```bash
-sudo docker run -it --privileged \
+$ sudo docker run -it --privileged \
      -v "$HOME/.ethereum/testnet":/root/.ethereum/testnet \
      -v "$(pwd)":/etherfs/source \
      -v "$(pwd)/etherfs":/etherfs/fs:shared \
@@ -107,7 +114,26 @@ $ cat etherfs/Add/bin
 606060405260318060106000396000f3606060405260e060020a600035046397842cce8114601c575b6002565b34600257602435600435016060908152602090f3
 ```
 
-### .eth files (already deployed contracts)
+
+### Deploy contract (TODO)
+
+```bash
+$ etherfs/ContractName/deploy
+0x1234567890ContractAddress
+```
+
+
+### Interact with deployed contracts (TODO)
+
+Call contract methods:
+
+```bash
+$ etherfs/Add/instances/latest/x 12 13
+25
+```
+
+
+### .eth files (already deployed contracts) (TODO)
 
 All files with `.eth` extension are treated as specification files for already deployed contract. They format is:
 ```
