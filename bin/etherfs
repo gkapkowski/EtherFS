@@ -1,0 +1,318 @@
+#!/usr/bin/env python
+from __future__ import with_statement
+
+import subprocess
+import re
+import os
+import sys
+import json
+import time
+import errno
+import glob
+from errno import ENOENT
+from stat import S_IFDIR, S_IFLNK, S_IFREG
+from web3 import Web3, IPCProvider
+from web3.providers.ipc import get_default_ipc_path
+from fuse import FUSE, FuseOSError, Operations
+import getpass
+
+NOW = time.time()
+
+ATTRS = {
+    "directory": dict(st_mode=(S_IFDIR | 0o444), st_nlink=2, st_ctime=NOW, st_mtime=NOW, st_atime=NOW),
+    "data": dict(st_mode=(S_IFREG | 0o444), st_nlink=1, st_ctime=NOW, st_mtime=NOW, st_atime=NOW),
+    "executable": dict(st_mode=(S_IFREG | 0o555), st_nlink=1, st_size=1000, st_ctime=NOW, st_mtime=NOW, st_atime=NOW),
+    "symlink": dict(st_mode=(S_IFREG | 0o444), st_nlink=1, st_size=1000, st_ctime=NOW, st_mtime=NOW, st_atime=NOW),
+}
+
+
+PATHS = {
+    r"^/$": {
+        "type": "directory",
+        "doc": "Main directory",
+        "content": lambda self, match: ['.personal'] + self.contracts.keys(),
+    },
+
+    # Personal
+    r"^/.personal$": {
+        "type": "directory",
+        "content": lambda self, match: ["accounts"],
+    },
+    r"^/.personal/accounts$": {
+        "type": "directory",
+        "content": lambda self, match: ["new"] + self.accounts,
+    },
+    r"^/.personal/accounts/new$": {
+        "type": "executable",
+        "doc": "Create new account",
+        "content": lambda self, match: open('/etherfs/bin/new').read()
+    },
+    r"^/.personal/accounts/(?P<account>0x\w{40})$": {
+        "type": "directory",
+        "doc": "Account directory",
+        "content": lambda self, match: ["unlock", "balance"],
+    },
+    r"^/.personal/accounts/(?P<account>0x\w{40})/unlock$": {
+        "type": "executable",
+        "doc": "Unlock account",
+        "content": lambda self, match: open('/etherfs/bin/unlock').read()
+    },
+    r"^/.personal/accounts/(?P<account>0x\w{40})/balance$": {
+        "type": "data",
+        "doc": "Show account balance",
+        "content": lambda self, match: "Not Implemented Yet"
+    },
+
+    # Contract
+    r"^/(?P<name>\w+)$": {
+        "type": "directory",
+        "doc": "Contact directory",
+        "content": lambda self, match: ["deploy"] + self.contracts[match.group("name")].keys()
+    },
+    r"^/(?P<name>\w+)/abi$": {
+        "type": "data",
+        "doc": "ABI specification of the contract.",
+        "content": lambda self, match: self.contracts[match.group("name")]["abi"]
+    },
+    r"^/(?P<name>\w+)/asm$": {
+        "type": "data",
+        "doc": "EVM assembly of the contract.",
+        "content": lambda self, match: json.dumps(self.contracts[match.group("name")]["asm"])
+    },
+    r"^/(?P<name>\w+)/ast$": {
+        "type": "data",
+        "doc": "AST of all source files.",
+        "content": lambda self, match: self.contracts[match.group("name")]["ast"]
+    },
+    r"^/(?P<name>\w+)/bin$": {
+        "type": "data",
+        "doc": "Binary of the contracts in hex.",
+        "content": lambda self, match: self.contracts[match.group("name")]["bin"]
+    },
+    r"^/(?P<name>\w+)/bin-runtime$": {
+        "type": "data",
+        "doc": "Binary of the runtime part of the contract in hex.",
+        "content": lambda self, match: self.contracts[match.group("name")]["bin-runtime"]
+    },
+    r"^/(?P<name>\w+)/clone-bin$": {
+        "type": "data",
+        "doc": "Binary of the clone contract in hex.",
+        "content": lambda self, match: self.contracts[match.group("name")]["clone-bin"]
+    },
+    r"^/(?P<name>\w+)/opcodes$": {
+        "type": "data",
+        "doc": "Opcodes of the contract.",
+        "content": lambda self, match: self.contracts[match.group("name")]["opcodes"]
+    },
+    r"^/(?P<name>\w+)/srcmap$": {
+        "type": "data",
+        "doc": "TODO",
+        "content": lambda self, match: self.contracts[match.group("name")]["srcmap"]
+    },
+    r"^/(?P<name>\w+)/srcmap-runtime$": {
+        "type": "data",
+        "doc": "TODO",
+        "content": lambda self, match: self.contracts[match.group("name")]["srcmap-runtime"]
+    },
+    r"^/(?P<name>\w+)/devdoc$": {
+        "type": "data",
+        "doc": "Natspec developer documentation of all contract.",
+        "content": lambda self, match: self.contracts[match.group("name")]["devdoc"]
+    },
+    r"^/(?P<name>\w+)/userdoc$": {
+        "type": "data",
+        "doc": "Natspec user documentation of all contract.",
+        "content": lambda self, match: self.contracts[match.group("name")]["userdoc"]
+    },
+    r"^/(?P<name>\w+)/deploy$": {
+        "type": "executable",
+        "doc": "Deploy contract to blockchain",
+        "content": lambda self, match: open('/etherfs/bin/deploy').read()
+    },
+
+    # Contract instance (deployed contract)
+    r"^/(?P<name>\w+)/instances$": {
+        "type": "directory",
+        "doc": "Directory containing all contract instances deployed in current session",
+        "content": lambda self, match: self.instances[match.group("name")].keys()
+    },
+    r"^/(?P<name>\w+)/instances/(?P<number>\d+)/$": {
+        "type": "directory",
+        "doc": "Deployed contract directory",
+        "content": lambda self, match: self.instances[match.group("name")][match.group("number")].keys()
+    },
+    r"^/(?P<name>\w+)/instances/latest/$": {
+        "type": "symlink",
+        "doc": "Symlink to latest deployed contract",
+        "content": lambda self, match: "/{name}/instances/{max}/".format(
+            name=match.group("name"),
+            max=max(i for i in self.instances[match.group("name")] if isinstance(i, int)))
+    },
+    r"^/(?P<name>\w+)/instances/(?P<number>\d+)/(?P<method>\w+)$": {
+        "type": "executable",
+        "doc": "Contract method, executable",
+        "content": lambda self, match: open('/etherfs/bin/call').read()
+    },
+}
+
+
+class Paths(object):
+
+    def __init__(self):
+        self.paths = dict((re.compile(pattern), value) for pattern, value in PATHS.items())
+
+    def resolve(self, path):
+        for pattern, value in self.paths.items():
+            match = pattern.match(path)
+            if match:
+                return match, value
+        return None, None
+
+
+class Geth(object):
+
+    account = None
+
+    def __init__(self, testnet=True):
+        self.testnet = testnet
+        self.geth = subprocess.Popen(['/usr/bin/geth', '--testnet', '--fast', '--cache', '512'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.wait()
+        self.web3 = Web3(IPCProvider(testnet=testnet))
+        self.accounts = self.web3.eth.accounts
+
+    def wait(self):
+        while True:
+            if os.path.exists(get_default_ipc_path(testnet=self.testnet)):
+                break
+            time.sleep(1)
+
+
+class Passthrough(Operations):
+
+    ATTRS = ['abi', 'asm', 'ast', 'bin', 'bin-runtime', 'clone-bin', 'devdoc', 'opcodes', 'srcmap', 'srcmap-runtime', 'userdoc']
+
+    def __init__(self, root):
+        self.fd = 0
+        self.root = root
+        self.contracts = {}
+        self.instances = {}
+        self.paths = Paths()
+        self.geth = Geth()
+        self.accounts = self.geth.accounts
+        self.populate()
+
+    def populate(self):
+        for source_file in glob.glob(os.path.join(self.root, "*.sol")):
+            output = subprocess.check_output([
+                'solc', '--add-std', '--optimize',
+                '--combined-json', ','.join(self.ATTRS),
+                source_file
+            ])
+
+            compiled_data = json.loads(output)
+
+            for contract_name, contract_data in compiled_data['contracts'].items():
+                # TODO check for duplicates
+                self.contracts[contract_name] = contract_data
+
+        print self.contracts.keys()
+
+    # Filesystem methods
+    # ==================
+
+    def access(self, path, mode):
+        print 'access', path, mode
+
+    def chmod(self, path, mode):
+        print 'chmod', path
+
+    def chown(self, path, uid, gid):
+        print 'chown', path
+
+    def getattr(self, path, fh=None):
+        print 'getattr', path
+
+        match, details = self.paths.resolve(path)
+
+        if not match:
+            return dict()
+
+        attrs = ATTRS[details["type"]]
+
+        if details["type"] != "directory":
+            attrs["st_size"] = len(self.read(path))
+
+        return attrs
+
+
+    def readdir(self, path, fh):
+        print path, fh
+
+        match, details = self.paths.resolve(path)
+
+        if match:
+            for r in details["content"](self, match):
+                yield r
+
+    def readlink(self, path):
+        print 'readlink', path
+
+    def mknod(self, path, mode, dev):
+        print 'mknod', path
+
+    def rmdir(self, path):
+        print 'rmdir', path
+
+    def mkdir(self, path, mode):
+        print 'mkdir', path
+
+    def statfs(self, path):
+        print 'statfs', path
+        # stv = os.statvfs(full_path)
+        # return dict((key, getattr(stv, key)) for key in ('f_bavail', 'f_bfree',
+        #     'f_blocks', 'f_bsize', 'f_favail', 'f_ffree', 'f_files', 'f_flag',
+        #     'f_frsize', 'f_namemax'))
+
+    def unlink(self, path):
+        print 'unlink', path
+
+    def symlink(self, name, target):
+        print 'symlink', name, target
+
+    def rename(self, old, new):
+        print 'rename', old, new
+
+    def link(self, target, name):
+        print 'link', target, name
+
+    def utimens(self, path, times=None):
+        print 'utimens', path
+
+
+    # File methods
+    # ============
+
+    def open(self, path, flags):
+        self.fd += 1
+        return self.fd
+
+    def read(self, path, length=None, offset=None, fh=None):
+        print 'read', path, length, offset, fh
+
+        match, details = self.paths.resolve(path)
+
+        if not match:
+            return ""
+
+        return details["content"](self, match)
+
+    def write(self, path, buf, offset, fh):
+        print 'write', path, buf, offset, fh
+
+
+def main(root, mountpoint):
+    FUSE(Passthrough(root), mountpoint, nothreads=True, foreground=True, allow_other=True)
+
+
+if __name__ == '__main__':
+    main('/etherfs/source', '/etherfs/fs')

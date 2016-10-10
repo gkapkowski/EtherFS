@@ -30,6 +30,6 @@ RUN pip install fusepy
 EXPOSE 8545
 EXPOSE 30303
 
-ADD etherfs /usr/local/sbin/etherfs
+ADD bin /etherfs/bin
 
-CMD /usr/local/sbin/etherfs
+CMD /etherfs/bin/etherfs
