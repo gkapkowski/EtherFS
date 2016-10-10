@@ -1,5 +1,7 @@
 # EtherFS
 
+[![Join the chat at https://gitter.im/EtherFS/Lobby](https://badges.gitter.im/EtherFS/Lobby.svg)](https://gitter.im/EtherFS/Lobby?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+
 Easy way to interact with Ethereum contracts through file system abstraction.
 
 ## Prerequisite
