@@ -6,10 +6,10 @@ Easy way to interact with Ethereum contracts through file system abstraction.
 
 ## Prerequisite
 
-EtherFS uses docker so you have to have installed docker and have `docker` command available. 
+EtherFS uses docker so you have to have installed docker and have `docker` command available.
 You cna find more on how to install docker here https://docs.docker.com/engine/installation/
 
-## Install 
+## Install
 
 ```bash
 sudo wget https://raw.githubusercontent.com/gkapkowski/EtherFS/master/etherfs.sh -O /usr/local/sbin/etherfs
@@ -19,8 +19,8 @@ sudo chmod 755 /usr/local/sbin/etherfs
 
 ```bash
 sudo docker run -it --privileged \
-     -v "$(pwd)":/workspace \
-     -v "$(pwd)/etherfs":/etherfs:shared \
+     -v "$(pwd)":/etherfs/source \
+     -v "$(pwd)/etherfs":/etherfs/fs:shared \
      gkapkowski/etherfs
 ```
 Use your local testnet data:
@@ -28,8 +28,8 @@ Use your local testnet data:
 ```bash
 sudo docker run -it --privileged \
      -v "$HOME/.ethereum/testnet":/root/.ethereum/testnet \
-     -v "$(pwd)":/workspace \
-     -v "$(pwd)/etherfs":/etherfs:shared \
+     -v "$(pwd)":/etherfs/source \
+     -v "$(pwd)/etherfs":/etherfs/fs:shared \
      gkapkowski/etherfs
 ```
 

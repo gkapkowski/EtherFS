@@ -1,5 +1,5 @@
 #!/bin/bash
 sudo docker run -it --privileged \
-     -v "$(pwd)":/workspace \
-     -v "$(pwd)/etherfs":/etherfs:shared \
+     -v "$(pwd)":/etherfs/source \
+     -v "$(pwd)/etherfs":/etherfs/fs:shared \
      gkapkowski/etherfs
